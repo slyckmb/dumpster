@@ -1,0 +1,32 @@
+# Byte-compiled / built files
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+
+# Virtual environments
+.venv/
+.venv_name
+
+# Output folders
+output/
+test_output/
+data/
+
+# ZIPs, logs, and temp test data
+*.zip
+*.log
+*.tmp
+
+# Editor and OS noise
+.DS_Store
+*.swp
+*.swo
+*.bak
+
+# VSCode
+.vscode/
+
+# macOS extended attrs
+*.AppleDouble
+test/test_export.zip

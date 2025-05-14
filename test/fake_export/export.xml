@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<HealthData locale="en_US">
+  <Record type="HKQuantityTypeIdentifierStepCount"
+          unit="count"
+          value="256"
+          startDate="2024-04-01T09:00:00Z"
+          endDate="2024-04-01T09:05:00Z"
+          sourceName="Test Device"
+          creationDate="2024-04-01T09:06:00Z"/>
+  <Record type="HKQuantityTypeIdentifierHeartRate"
+          unit="count/min"
+          value="74"
+          startDate="2024-04-01T09:01:00Z"
+          endDate="2024-04-01T09:01:30Z"
+          sourceName="Test Watch"
+          creationDate="2024-04-01T09:02:00Z"/>
+  <Workout workoutActivityType="HKWorkoutActivityTypeRunning"
+           duration="32.5"
+           totalEnergyBurned="305"
+           totalDistance="5.0"
+           startDate="2024-04-01T09:00:00Z"
+           endDate="2024-04-01T09:32:30Z"
+           device="Test Watch"/>
+</HealthData>
