@@ -1,63 +1,71 @@
 #!/usr/bin/env python3
 
-"""
-Script: dumpster.py
-Version: v0.2.3-rc1
-REQUIREMENTS: v0.2.3
-"""
-
 import zipfile, os, json, click, datetime, tempfile
 from lxml import etree
 from collections import defaultdict
 from pathlib import Path
+
+from __version__ import VERSION, REQUIREMENTS_VERSION
 from dedup import should_merge, merge_fit_into_apple
+from fit_loader import load_fit_workouts
 
-VERSION = "v0.2.3-rc1"
-REQUIREMENTS_VERSION = "v0.2.3"
-NOW = datetime.datetime.now().isoformat(timespec='seconds')
+@click.command()
+@click.version_option(
+    version=VERSION,
+    prog_name="DUMPSTER",
+    message="%(prog)s %(version)s\nSpec: REQUIREMENTS_v" + REQUIREMENTS_VERSION + ".md"
+)
+@click.argument('export_zip', type=click.Path(exists=True))
+@click.option('--filter-type', help='Filter type (use --list-types to view options)')
+@click.option('--start', help='Start date YYYY-MM-DD')
+@click.option('--end', help='End date YYYY-MM-DD')
+@click.option('--fit-dir', type=click.Path(exists=True), help='Path to folder of .fit files')
+@click.option('--structure', type=click.Choice(['tree', 'flat']), default='tree')
+@click.option('--summary', is_flag=True, help='Show summary only (no output files)')
+@click.option('--dryrun', is_flag=True, help='Preview actions without writing files')
+@click.option('--safe', is_flag=True, help='Remove personal fields (PII)')
+@click.option('--savepath', default=".", help='Base path to save the output folder')
+@click.option('--list-types', is_flag=True, help='Show all filter types and meta aliases')
+def main(export_zip, filter_type, start, end, fit_dir, structure, summary, dryrun, safe, savepath, list_types):
+    click.echo(f"📦 Version: {VERSION}")
+    click.echo(f"📥 CLI Args: {export_zip}")
+    click.echo(f"🔒 Spec: REQUIREMENTS_v{REQUIREMENTS_VERSION}.md")
 
-# Filter aliases
-FILTER_ALIASES = {
-    "steps": "HKQuantityTypeIdentifierStepCount",
-    "heart": "HKQuantityTypeIdentifierHeartRate",
-    "sleep": "HKCategoryTypeIdentifierSleepAnalysis",
-    "weight": "HKQuantityTypeIdentifierBodyMass",
-    "workouts": "WORKOUT",
-    "hrv": "HKQuantityTypeIdentifierHeartRateVariabilitySDNN",
-    "vo2": "HKQuantityTypeIdentifierVO2Max",
-    "energy": "HKQuantityTypeIdentifierActiveEnergyBurned",
-    "distance": "HKQuantityTypeIdentifierDistanceWalkingRunning",
-    "cadence": "CADENCE",
-    "gps": "GPS",
-    "activity": "META_ACTIVITY",
-    "biometrics": "META_BIOMETRICS",
-    "all": None
-}
+    if list_types:
+        print_aliases()
+        return
 
-REVERSE_ALIASES = {v: k for k, v in FILTER_ALIASES.items() if v}
+    filter_list = normalize_filters(filter_type)
+    output_path = resolve_output_path(export_zip, savepath)
 
-META_FILTERS = {
-    "activity": [
-        "HKQuantityTypeIdentifierStepCount",
-        "HKQuantityTypeIdentifierDistanceWalkingRunning",
-        "WORKOUT"
-    ],
-    "biometrics": [
-        "HKQuantityTypeIdentifierHeartRate",
-        "HKQuantityTypeIdentifierHeartRateVariabilitySDNN",
-        "HKQuantityTypeIdentifierVO2Max",
-        "HKQuantityTypeIdentifierBodyMass"
-    ]
-}
+    if summary:
+        with tempfile.TemporaryDirectory() as tmp:
+            xml_path = extract_xml(export_zip, tmp)
+            records, workouts = parse_xml(xml_path, filter_type=filter_list, start=start, end=end, safe=safe)
+        click.echo("\n[📊 Summary]")
+        click.echo(f"Records: {sum(len(v) for v in records.values())}")
+        click.echo(f"Workouts: {len(workouts)}")
+        return
 
-WORKOUT_ALIASES = {
-    "HKWorkoutActivityTypeRunning": "run",
-    "HKWorkoutActivityTypeWalking": "walk",
-    "HKWorkoutActivityTypeCycling": "bike",
-    "HKWorkoutActivityTypeFunctionalStrengthTraining": "strength",
-    "HKWorkoutActivityTypeSwimming": "swim",
-    "HKWorkoutActivityTypeYoga": "yoga"
-}
+    xml_path = extract_xml(export_zip, output_path / 'raw')
+    records, workouts = parse_xml(xml_path, filter_type=filter_list, start=start, end=end, safe=safe)
+
+    fit_workouts = load_fit_workouts(fit_dir) if fit_dir else []
+    merged, leftovers = merge_workouts(workouts, fit_workouts)
+
+    all_workouts = merged + leftovers
+    source_counts = {
+        "xml": len(workouts),
+        "fit": len(fit_workouts),
+    }
+
+    if structure == 'flat':
+        dump_flat(records, all_workouts, output_path, source_counts, len(merged))
+    else:
+        output_tree(records, all_workouts, output_path, dryrun, source_counts, len(merged))
+
+    if not dryrun:
+        click.echo(f"\n✅ Output written to {output_path}")
 
 def resolve_output_path(zipfile_path, savepath="."):
     base = Path(zipfile_path).stem
@@ -69,6 +77,22 @@ def extract_xml(zip_path, extract_to):
     with zipfile.ZipFile(zip_path, 'r') as z:
         z.extractall(extract_to)
     return os.path.join(extract_to, 'export.xml')
+def print_aliases():
+    from __version__ import FILTER_ALIASES, META_FILTERS
+    click.echo("\nAvailable filter types:\n")
+    for k, v in FILTER_ALIASES.items():
+        if v: click.echo(f"  {k:10} → {v}")
+    click.echo("\nMeta filters:\n")
+    for k, v in META_FILTERS.items():
+        click.echo(f"  {k:10} → {', '.join(v)}")
+
+def normalize_filters(ftype):
+    from __version__ import FILTER_ALIASES, META_FILTERS
+    if not ftype or ftype == 'all':
+        return None
+    if ftype in META_FILTERS:
+        return META_FILTERS[ftype]
+    return [FILTER_ALIASES.get(ftype, ftype)]
 
 def parse_dt(dtstr):
     try:
@@ -79,30 +103,22 @@ def parse_dt(dtstr):
 def try_cast(value):
     if not value: return None
     try: return int(value)
-    except:
+    except: 
         try: return float(value)
         except: return value
-
-def normalize_filters(ftype):
-    if not ftype or ftype == 'all':
-        return None
-    if ftype in META_FILTERS:
-        return META_FILTERS[ftype]
-    return [FILTER_ALIASES.get(ftype, ftype)]
 
 def redact(record):
     return {
         k: v for k, v in record.items()
-        if k not in ("source_name", "creation_date", "device")
+        if k not in ("source_name", "creation_date", "device", "file")
     }
 
 def parse_xml(xml_path, filter_type=None, start=None, end=None, safe=False):
+    from __version__ import REVERSE_ALIASES
     tree = etree.parse(xml_path)
     root = tree.getroot()
-
     records = defaultdict(list)
     workouts = []
-
     start = datetime.datetime.strptime(start, "%Y-%m-%d") if start else None
     end = datetime.datetime.strptime(end, "%Y-%m-%d") if end else None
 
@@ -129,8 +145,6 @@ def parse_xml(xml_path, filter_type=None, start=None, end=None, safe=False):
             records[type_].append(record)
 
         elif el.tag == 'Workout':
-            if filter_type and "WORKOUT" not in filter_type:
-                continue
             workout = {
                 'type': el.get('workoutActivityType'),
                 'duration_min': try_cast(el.get('duration')),
@@ -138,14 +152,31 @@ def parse_xml(xml_path, filter_type=None, start=None, end=None, safe=False):
                 'distance_km': try_cast(el.get('totalDistance')),
                 'start_time': el.get('startDate'),
                 'end_time': el.get('endDate'),
-                'device': el.get('device')
+                'device': el.get('device'),
+                'source': 'xml'
             }
             if safe: workout = redact(workout)
             workouts.append(workout)
 
     return records, workouts
 
-def output_tree(records, workouts, outdir, dryrun=False):
+def merge_workouts(xml_list, fit_list):
+    merged = []
+    fit_unmatched = []
+
+    for fit in fit_list:
+        match = None
+        for xml in xml_list:
+            if should_merge(xml, fit):
+                match = xml
+                break
+        if match:
+            merged.append(merge_fit_into_apple(match, fit))
+        else:
+            fit_unmatched.append(fit)
+    return merged, fit_unmatched
+
+def output_tree(records, workouts, outdir, dryrun, source_counts, merged_count):
     outdir = Path(outdir)
     if dryrun:
         click.echo(f"💡 [DRYRUN] Would write to {outdir}")
@@ -155,23 +186,29 @@ def output_tree(records, workouts, outdir, dryrun=False):
     (outdir / 'workouts').mkdir(parents=True, exist_ok=True)
     (outdir / 'raw').mkdir(parents=True, exist_ok=True)
 
-    summary = {"record_types": {}, "total_workouts": len(workouts)}
+    summary = {
+        "record_types": {},
+        "total_workouts": len(workouts),
+        "source_counts": source_counts,
+        "merged_workouts": merged_count
+    }
+
     for rtype, items in records.items():
-        alias = REVERSE_ALIASES.get(rtype, rtype.split('.')[-1].lower())
+        alias = rtype.split('.')[-1].lower()
         with open(outdir / 'records' / f"{alias}.json", 'w') as f:
             json.dump(items, f, indent=2)
         summary["record_types"][alias] = len(items)
 
     for w in workouts:
         date = w['start_time'][:10]
-        wtype = WORKOUT_ALIASES.get(w['type'], w['type'].split('Type')[-1].lower())
+        wtype = w['type'].split('Type')[-1].lower()
         with open(outdir / 'workouts' / f"{date}_{wtype}.json", 'w') as f:
             json.dump(w, f, indent=2)
 
     with open(outdir / 'summary.json', 'w') as f:
         json.dump(summary, f, indent=2)
 
-def dump_flat(records, workouts, outdir):
+def dump_flat(records, workouts, outdir, source_counts, merged_count):
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     flat = {
@@ -179,73 +216,17 @@ def dump_flat(records, workouts, outdir):
         "workouts": workouts,
         "summary": {
             "record_types": {},
-            "total_workouts": len(workouts)
+            "total_workouts": len(workouts),
+            "source_counts": source_counts,
+            "merged_workouts": merged_count
         }
     }
     for rtype, items in records.items():
-        alias = REVERSE_ALIASES.get(rtype, rtype.split('.')[-1].lower())
+        alias = rtype.split('.')[-1].lower()
         flat["records"][alias] = items
         flat["summary"]["record_types"][alias] = len(items)
     with open(outdir / 'dumpster.json', 'w') as f:
         json.dump(flat, f, indent=2)
-
-@click.command()
-@click.argument('export_zip', type=click.Path(exists=True))
-@click.option('--filter-type', help='Filter type (use --list-types to view options)')
-@click.option('--start', help='Start date YYYY-MM-DD')
-@click.option('--end', help='End date YYYY-MM-DD')
-@click.option('--fit-dir', type=click.Path(exists=True), help='Path to folder of .fit files')
-@click.option('--structure', type=click.Choice(['tree', 'flat']), default='tree')
-@click.option('--summary', is_flag=True, help='Show summary only (no output files)')
-@click.option('--dryrun', is_flag=True, help='Preview actions without writing files')
-@click.option('--safe', is_flag=True, help='Remove personal fields (PII)')
-@click.option('--savepath', default=".", help='Base path to save the output folder')
-@click.option('--list-types', is_flag=True, help='Show all filter types and meta aliases')
-def main(export_zip, filter_type, start, end, fit_dir, structure, summary, dryrun, safe, savepath, list_types):
-    """DUMPSTER 🗑️ — v0.2.3-rc1 — Human-first Apple Health parser → JSON"""
-    click.echo(f"📦 Version: {VERSION}")
-    click.echo(f"⏱️ Timestamp: {NOW}")
-    click.echo(f"📥 CLI Args: {export_zip}")
-    if filter_type: click.echo(f"🔧 Filter: {filter_type}")
-    if start or end: click.echo(f"📅 Date Range: {start} to {end}")
-    if safe: click.echo("🧼 Safe mode: ON")
-    if dryrun: click.echo("🚫 Dryrun: ON")
-    click.echo(f"📂 Savepath: {savepath}")
-    click.echo(f"🔒 Enforced by REQUIREMENTS.md {REQUIREMENTS_VERSION}")
-
-    if list_types:
-        click.echo("\nAvailable filter types:\n")
-        for k, v in FILTER_ALIASES.items():
-            if v: click.echo(f"  {k:10} → {v}")
-        click.echo("\nMeta filters:\n")
-        for k, v in META_FILTERS.items():
-            click.echo(f"  {k:10} → {', '.join(v)}")
-        return
-
-    filter_list = normalize_filters(filter_type)
-    output_path = resolve_output_path(export_zip, savepath)
-
-    if summary:
-        with tempfile.TemporaryDirectory() as tmp:
-            xml_path = extract_xml(export_zip, tmp)
-            records, workouts = parse_xml(xml_path, filter_type=filter_list, start=start, end=end, safe=safe)
-        click.echo("\n[📊 Summary]")
-        click.echo(f"Records: {sum(len(v) for v in records.values())}")
-        click.echo(f"Workouts: {len(workouts)}")
-        click.echo(f"Date Range: {start or 'beginning'} → {end or 'latest'}")
-        return
-
-    xml_path = extract_xml(export_zip, output_path / 'raw')
-    records, workouts = parse_xml(xml_path, filter_type=filter_list, start=start, end=end, safe=safe)
-
-    click.echo(f"📁 Output folder will be: {output_path}")
-    if structure == 'flat':
-        dump_flat(records, workouts, output_path)
-    else:
-        output_tree(records, workouts, output_path, dryrun)
-
-    if not dryrun:
-        click.echo(f"\n✅ Output written to {output_path}")
 
 if __name__ == '__main__':
     main()

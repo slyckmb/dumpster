@@ -40,3 +40,4 @@ test-summary: ##Test: Show summary only (no file output)
 clean-tests: ##Clean: Remove all test_output folders
 	@echo "🧼 Cleaning test_output/"
 	@rm -rf ./test_output/*
+	
