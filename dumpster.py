@@ -2,9 +2,9 @@
 
 """
 Script: dumpster.py
-Version: v0.2.1-pre
-Last updated: 2025-05-14T17:31Z
-REQUIREMENTS.md: v0.2.0
+Version: v0.2.2-dev
+Last updated: 2025-05-14T19:22Z
+REQUIREMENTS.md: v0.2.2
 """
 
 import zipfile, os, json, click, datetime
@@ -12,12 +12,11 @@ from lxml import etree
 from collections import defaultdict
 from pathlib import Path
 
-# Constants
-VERSION = "v0.2.1-pre"
-REQUIREMENTS_VERSION = "v0.2.0"
+VERSION = "v0.2.2-dev"
+REQUIREMENTS_VERSION = "v0.2.2"
 NOW = datetime.datetime.now().isoformat(timespec='seconds')
 
-# ✅ Filter aliases
+# Aliases
 FILTER_ALIASES = {
     "steps": "HKQuantityTypeIdentifierStepCount",
     "heart": "HKQuantityTypeIdentifierHeartRate",
@@ -35,7 +34,6 @@ FILTER_ALIASES = {
     "all": None
 }
 
-# ✅ Meta filter expansion
 META_FILTERS = {
     "activity": [
         "HKQuantityTypeIdentifierStepCount",
@@ -50,7 +48,7 @@ META_FILTERS = {
     ]
 }
 
-def extract_xml(zip_path, extract_to='output/raw'):
+def extract_xml(zip_path, extract_to):
     with zipfile.ZipFile(zip_path, 'r') as z:
         z.extractall(extract_to)
     return os.path.join(extract_to, 'export.xml')
@@ -139,6 +137,7 @@ def output_tree(records, workouts, outdir, dryrun=False):
 
     (outdir / 'records').mkdir(parents=True, exist_ok=True)
     (outdir / 'workouts').mkdir(parents=True, exist_ok=True)
+    (outdir / 'raw').mkdir(parents=True, exist_ok=True)
 
     summary = {"record_types": {}, "total_workouts": len(workouts)}
     for rtype, items in records.items():
@@ -157,6 +156,12 @@ def output_tree(records, workouts, outdir, dryrun=False):
     with open(outdir / 'summary.json', 'w') as f:
         json.dump(summary, f, indent=2)
 
+def resolve_output_path(zipfile_path, savepath="."):
+    base = Path(zipfile_path).stem
+    timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M")
+    foldername = f"{base}_{timestamp}"
+    return Path(savepath).expanduser().resolve() / foldername
+
 @click.command()
 @click.argument('export_zip', type=click.Path(exists=True))
 @click.option('--filter-type', help='Filter type (use --list-types to view options)')
@@ -167,18 +172,19 @@ def output_tree(records, workouts, outdir, dryrun=False):
 @click.option('--summary', is_flag=True, help='Show summary only (no output files)')
 @click.option('--dryrun', is_flag=True, help='Preview actions without writing files')
 @click.option('--safe', is_flag=True, help='Remove personal fields (PII)')
+@click.option('--savepath', default=".", help='Base path to save the output folder')
 @click.option('--list-types', is_flag=True, help='Show all filter types and meta aliases')
-def main(export_zip, filter_type, start, end, fit_dir, structure, summary, dryrun, safe, list_types):
-    """DUMPSTER 🗑️ - Guardrails-compliant Apple Health parser → JSON"""
+def main(export_zip, filter_type, start, end, fit_dir, structure, summary, dryrun, safe, savepath, list_types):
+    """DUMPSTER 🗑️ - Apple Health / .fit parser → JSON (Guardrails 2.2.2 Compliant)"""
 
-    # 🧠 Header
     click.echo(f"📦 Version: {VERSION}")
     click.echo(f"⏱️ Timestamp: {NOW}")
     click.echo(f"📥 CLI Args: {export_zip}")
     if filter_type: click.echo(f"🔧 Filter: {filter_type}")
     if start or end: click.echo(f"📅 Date Range: {start} to {end}")
     if safe: click.echo("🧼 Safe mode: ON")
-    if dryrun: click.echo("🚫 Dryrun: ON (no files will be written)")
+    if dryrun: click.echo("🚫 Dryrun: ON")
+    click.echo(f"📂 Savepath: {savepath}")
     click.echo(f"🔒 Enforced by REQUIREMENTS.md {REQUIREMENTS_VERSION}")
 
     if list_types:
@@ -191,7 +197,11 @@ def main(export_zip, filter_type, start, end, fit_dir, structure, summary, dryru
         return
 
     filter_list = normalize_filters(filter_type)
-    xml_path = extract_xml(export_zip)
+    output_path = resolve_output_path(export_zip, savepath)
+
+    xml_extract_path = output_path / 'raw'
+    xml_path = extract_xml(export_zip, xml_extract_path)
+
     records, workouts = parse_xml(xml_path, filter_type=filter_list, start=start, end=end, safe=safe)
 
     if summary:
@@ -201,11 +211,11 @@ def main(export_zip, filter_type, start, end, fit_dir, structure, summary, dryru
         click.echo(f"Date Range: {start or 'beginning'} → {end or 'latest'}")
         return
 
-    outdir = "output"
-    if structure == 'tree':
-        output_tree(records, workouts, outdir, dryrun)
-        if not dryrun:
-            click.echo(f"\n✅ Output written to {outdir}/")
+    click.echo(f"📁 Output folder will be: {output_path}")
+    output_tree(records, workouts, output_path, dryrun)
+
+    if not dryrun:
+        click.echo(f"\n✅ Output written to {output_path}")
 
 if __name__ == '__main__':
     main()
