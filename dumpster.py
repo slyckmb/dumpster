@@ -2,21 +2,21 @@
 
 """
 Script: dumpster.py
-Version: v0.2.2-dev
-Last updated: 2025-05-14T19:22Z
-REQUIREMENTS.md: v0.2.2
+Version: v0.2.3-rc1
+REQUIREMENTS: v0.2.3
 """
 
-import zipfile, os, json, click, datetime
+import zipfile, os, json, click, datetime, tempfile
 from lxml import etree
 from collections import defaultdict
 from pathlib import Path
+from dedup import should_merge, merge_fit_into_apple
 
-VERSION = "v0.2.2-dev"
-REQUIREMENTS_VERSION = "v0.2.2"
+VERSION = "v0.2.3-rc1"
+REQUIREMENTS_VERSION = "v0.2.3"
 NOW = datetime.datetime.now().isoformat(timespec='seconds')
 
-# Aliases
+# Filter aliases
 FILTER_ALIASES = {
     "steps": "HKQuantityTypeIdentifierStepCount",
     "heart": "HKQuantityTypeIdentifierHeartRate",
@@ -34,6 +34,8 @@ FILTER_ALIASES = {
     "all": None
 }
 
+REVERSE_ALIASES = {v: k for k, v in FILTER_ALIASES.items() if v}
+
 META_FILTERS = {
     "activity": [
         "HKQuantityTypeIdentifierStepCount",
@@ -47,6 +49,21 @@ META_FILTERS = {
         "HKQuantityTypeIdentifierBodyMass"
     ]
 }
+
+WORKOUT_ALIASES = {
+    "HKWorkoutActivityTypeRunning": "run",
+    "HKWorkoutActivityTypeWalking": "walk",
+    "HKWorkoutActivityTypeCycling": "bike",
+    "HKWorkoutActivityTypeFunctionalStrengthTraining": "strength",
+    "HKWorkoutActivityTypeSwimming": "swim",
+    "HKWorkoutActivityTypeYoga": "yoga"
+}
+
+def resolve_output_path(zipfile_path, savepath="."):
+    base = Path(zipfile_path).stem
+    timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M")
+    foldername = f"{base}_{timestamp}"
+    return Path(savepath).expanduser().resolve() / foldername
 
 def extract_xml(zip_path, extract_to):
     with zipfile.ZipFile(zip_path, 'r') as z:
@@ -131,8 +148,7 @@ def parse_xml(xml_path, filter_type=None, start=None, end=None, safe=False):
 def output_tree(records, workouts, outdir, dryrun=False):
     outdir = Path(outdir)
     if dryrun:
-        click.echo(f"💡 [DRYRUN] Would create folders: {outdir/'records'} and {outdir/'workouts'}")
-        click.echo(f"💡 [DRYRUN] Would write {len(records)} record types and {len(workouts)} workouts")
+        click.echo(f"💡 [DRYRUN] Would write to {outdir}")
         return
 
     (outdir / 'records').mkdir(parents=True, exist_ok=True)
@@ -141,26 +157,37 @@ def output_tree(records, workouts, outdir, dryrun=False):
 
     summary = {"record_types": {}, "total_workouts": len(workouts)}
     for rtype, items in records.items():
-        fname = outdir / 'records' / f"{rtype.split('.')[-1].lower()}.json"
-        with open(fname, 'w') as f:
+        alias = REVERSE_ALIASES.get(rtype, rtype.split('.')[-1].lower())
+        with open(outdir / 'records' / f"{alias}.json", 'w') as f:
             json.dump(items, f, indent=2)
-        summary["record_types"][rtype] = len(items)
+        summary["record_types"][alias] = len(items)
 
     for w in workouts:
         date = w['start_time'][:10]
-        wtype = w['type'].split('Type')[-1].lower()
-        fname = outdir / 'workouts' / f"{date}_{wtype}.json"
-        with open(fname, 'w') as f:
+        wtype = WORKOUT_ALIASES.get(w['type'], w['type'].split('Type')[-1].lower())
+        with open(outdir / 'workouts' / f"{date}_{wtype}.json", 'w') as f:
             json.dump(w, f, indent=2)
 
     with open(outdir / 'summary.json', 'w') as f:
         json.dump(summary, f, indent=2)
 
-def resolve_output_path(zipfile_path, savepath="."):
-    base = Path(zipfile_path).stem
-    timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M")
-    foldername = f"{base}_{timestamp}"
-    return Path(savepath).expanduser().resolve() / foldername
+def dump_flat(records, workouts, outdir):
+    outdir = Path(outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+    flat = {
+        "records": {},
+        "workouts": workouts,
+        "summary": {
+            "record_types": {},
+            "total_workouts": len(workouts)
+        }
+    }
+    for rtype, items in records.items():
+        alias = REVERSE_ALIASES.get(rtype, rtype.split('.')[-1].lower())
+        flat["records"][alias] = items
+        flat["summary"]["record_types"][alias] = len(items)
+    with open(outdir / 'dumpster.json', 'w') as f:
+        json.dump(flat, f, indent=2)
 
 @click.command()
 @click.argument('export_zip', type=click.Path(exists=True))
@@ -175,8 +202,7 @@ def resolve_output_path(zipfile_path, savepath="."):
 @click.option('--savepath', default=".", help='Base path to save the output folder')
 @click.option('--list-types', is_flag=True, help='Show all filter types and meta aliases')
 def main(export_zip, filter_type, start, end, fit_dir, structure, summary, dryrun, safe, savepath, list_types):
-    """DUMPSTER 🗑️ - Apple Health / .fit parser → JSON (Guardrails 2.2.2 Compliant)"""
-
+    """DUMPSTER 🗑️ — v0.2.3-rc1 — Human-first Apple Health parser → JSON"""
     click.echo(f"📦 Version: {VERSION}")
     click.echo(f"⏱️ Timestamp: {NOW}")
     click.echo(f"📥 CLI Args: {export_zip}")
@@ -199,20 +225,24 @@ def main(export_zip, filter_type, start, end, fit_dir, structure, summary, dryru
     filter_list = normalize_filters(filter_type)
     output_path = resolve_output_path(export_zip, savepath)
 
-    xml_extract_path = output_path / 'raw'
-    xml_path = extract_xml(export_zip, xml_extract_path)
-
-    records, workouts = parse_xml(xml_path, filter_type=filter_list, start=start, end=end, safe=safe)
-
     if summary:
+        with tempfile.TemporaryDirectory() as tmp:
+            xml_path = extract_xml(export_zip, tmp)
+            records, workouts = parse_xml(xml_path, filter_type=filter_list, start=start, end=end, safe=safe)
         click.echo("\n[📊 Summary]")
         click.echo(f"Records: {sum(len(v) for v in records.values())}")
         click.echo(f"Workouts: {len(workouts)}")
         click.echo(f"Date Range: {start or 'beginning'} → {end or 'latest'}")
         return
 
+    xml_path = extract_xml(export_zip, output_path / 'raw')
+    records, workouts = parse_xml(xml_path, filter_type=filter_list, start=start, end=end, safe=safe)
+
     click.echo(f"📁 Output folder will be: {output_path}")
-    output_tree(records, workouts, output_path, dryrun)
+    if structure == 'flat':
+        dump_flat(records, workouts, output_path)
+    else:
+        output_tree(records, workouts, output_path, dryrun)
 
     if not dryrun:
         click.echo(f"\n✅ Output written to {output_path}")
