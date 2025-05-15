@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 
-import zipfile, os, json, click, datetime, tempfile
+import os, json, zipfile, click, tempfile, datetime
+from pathlib import Path
 from lxml import etree
 from collections import defaultdict
-from pathlib import Path
 
 from __version__ import VERSION, REQUIREMENTS_VERSION, FILTER_ALIASES, META_FILTERS, REVERSE_ALIASES
 from dedup import should_merge, merge_fit_into_apple
@@ -13,7 +13,7 @@ from fit_loader import load_fit_workouts
 @click.version_option(
     version=VERSION,
     prog_name="DUMPSTER",
-    message="%(prog)s %(version)s\nSpec: REQUIREMENTS_v" + REQUIREMENTS_VERSION + ".md"
+    message="%(prog)s %(version)\nSpec: REQUIREMENTS_v" + REQUIREMENTS_VERSION + ".md"
 )
 @click.argument('export_zip', type=click.Path(exists=True))
 @click.option('--filter-type', help='Filter type (use --list-types to view options)')
@@ -51,6 +51,7 @@ def main(export_zip, filter_type, start, end, fit_dir, structure, summary, dryru
     records, workouts = parse_xml(xml_path, filter_type=filter_list, start=start, end=end, safe=safe)
 
     fit_workouts = load_fit_workouts(fit_dir) if fit_dir else []
+
     if fit_dir:
         merged, leftovers = merge_workouts(workouts, fit_workouts)
         all_workouts = merged + leftovers
@@ -58,17 +59,17 @@ def main(export_zip, filter_type, start, end, fit_dir, structure, summary, dryru
     else:
         all_workouts = workouts
         merged_count = 0
-    
+
     source_counts = {
         "xml": len(workouts),
-        "fit": len(fit_workouts),
+        "fit": len(fit_workouts)
     }
-    
 
     if structure == 'flat':
         dump_flat(records, all_workouts, output_path, source_counts, merged_count)
     else:
         output_tree(records, all_workouts, output_path, dryrun, source_counts, merged_count)
+
     if not dryrun:
         click.echo(f"\n✅ Output written to {output_path}")
 
@@ -77,6 +78,7 @@ def resolve_output_path(zipfile_path, savepath="."):
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M")
     foldername = f"{base}_{timestamp}"
     return Path(savepath).expanduser().resolve() / foldername
+
 def extract_xml(zip_path, extract_to):
     with zipfile.ZipFile(zip_path, 'r') as z:
         z.extractall(extract_to)
@@ -147,7 +149,7 @@ def parse_xml(xml_path, filter_type=None, start=None, end=None, safe=False):
             records[type_].append(record)
 
         elif el.tag == 'Workout':
-            if filter_type is not None and "WORKOUT" not in filter_type:
+            if filter_type and "WORKOUT" not in filter_type:
                 continue
             workout = {
                 'type': el.get('workoutActivityType'),
@@ -159,14 +161,11 @@ def parse_xml(xml_path, filter_type=None, start=None, end=None, safe=False):
                 'device': el.get('device'),
                 'source': 'xml'
             }
-            if safe:
-                workout = redact(workout)
+            if safe: workout = redact(workout)
             workouts.append(workout)
             print(f"📥 Parsed workout: {workout['type']} @ {workout['start_time']}")
-       
 
     return records, workouts
-
 def merge_workouts(xml_list, fit_list):
     merged = []
     fit_unmatched = []
@@ -181,6 +180,7 @@ def merge_workouts(xml_list, fit_list):
             merged.append(merge_fit_into_apple(match, fit))
         else:
             fit_unmatched.append(fit)
+
     return merged, fit_unmatched
 
 def output_tree(records, workouts, outdir, dryrun, source_counts, merged_count):
@@ -218,6 +218,7 @@ def output_tree(records, workouts, outdir, dryrun, source_counts, merged_count):
 def dump_flat(records, workouts, outdir, source_counts, merged_count):
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
+
     flat = {
         "records": {},
         "workouts": workouts,
@@ -228,6 +229,7 @@ def dump_flat(records, workouts, outdir, source_counts, merged_count):
             "merged_workouts": merged_count
         }
     }
+
     for rtype, items in records.items():
         alias = REVERSE_ALIASES.get(rtype, rtype.split('.')[-1].lower())
         flat["records"][alias] = items

@@ -1,8 +1,9 @@
-# __version__.py — DUMPSTER
+# __version__.py — DRY constants for CLI version and spec tag
 
-VERSION = "v0.2.4-fx5"
-REQUIREMENTS_VERSION = "0.2.4"
+VERSION = "v0.2.5-dev"
+REQUIREMENTS_VERSION = "0.2.5"
 
+# Filter aliases (human → Apple types)
 FILTER_ALIASES = {
     "steps": "HKQuantityTypeIdentifierStepCount",
     "heart": "HKQuantityTypeIdentifierHeartRate",
@@ -20,6 +21,7 @@ FILTER_ALIASES = {
     "all": None
 }
 
+# Meta filter expansions
 META_FILTERS = {
     "activity": [
         "HKQuantityTypeIdentifierStepCount",
@@ -34,4 +36,7 @@ META_FILTERS = {
     ]
 }
 
-REVERSE_ALIASES = {v: k for k, v in FILTER_ALIASES.items() if v}
+# Reverse alias map (for output filenames)
+REVERSE_ALIASES = {
+    v: k for k, v in FILTER_ALIASES.items() if v
+}

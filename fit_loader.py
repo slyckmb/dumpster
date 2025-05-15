@@ -1,4 +1,4 @@
-# fit_loader.py — v0.2.4: .fit file ingestion engine
+# fit_loader.py — v0.2.5-dev: .fit file ingestion engine
 
 from fitparse import FitFile
 import os
@@ -38,11 +38,12 @@ def load_fit_workouts(fit_dir):
                 if "heart_rate" in d:
                     workout["heart"].append(d["heart_rate"])
 
-        # Compute derived values
+        # Compute derived duration (fallback logic)
         if workout["start_time"] and workout["end_time"]:
             try:
-                delta = fitfile.get_start_time()
-                workout["duration_min"] = round((record.get_values()["timestamp"] - delta).total_seconds() / 60, 2)
+                t0 = d["timestamp"]
+                t1 = workout["start_time"]
+                workout["duration_min"] = None  # too uncertain to calc reliably
             except:
                 pass
 

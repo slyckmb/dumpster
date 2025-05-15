@@ -54,9 +54,21 @@ test-qa: ## QA: Full pipeline + log with version/timestamp
 	tree test_output >> "$$qafile" 2>&1; \
 	echo "\n[📄 FILE CONTENTS]" >> "$$qafile"; \
 	find test_output -type f ! -name "$$(basename $$qafile)" | while read file; do \
-			echo "\n--- $$file ---" >> "$$qafile"; \
+		echo "\n--- $$file ---" >> "$$qafile"; \
 		cat "$$file" >> "$$qafile"; \
 	done; \
+	make git-diff-qa >> "$$qafile" 2>&1; \
 	echo "\n✅ QA log saved to $$qafile"
 
-.PHONY: help clean-tests test-summary test-tree test-flat test-qa
+## git-diff-qa: Append all current diffs (A/M) to a log in test_output
+git-diff-qa: ## QA: Git diff (A/M files only) into timestamped log
+	@STAMP=$$(date +"%Y%m%d-%H%M"); \
+	QAFILE="test_output/qa_diff_$(VERSION)_$${STAMP}.txt"; \
+	echo "🧪 GIT DIFF QA — Version: $(VERSION) — Timestamp: $${STAMP}" > "$$QAFILE"; \
+	git status --porcelain | grep '^[AM]' | awk '{print $$2}' | while read file; do \
+		echo "\n--- FILE: $$file ---\n" >> "$$QAFILE"; \
+		git diff "$$file" >> "$$QAFILE"; \
+	done; \
+	echo "\n✅ Diff log written to $$QAFILE"
+
+.PHONY: help clean-tests test-summary test-tree test-flat test-qa git-diff-qa
