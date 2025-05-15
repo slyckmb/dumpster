@@ -5,7 +5,7 @@ from lxml import etree
 from collections import defaultdict
 from pathlib import Path
 
-from __version__ import VERSION, REQUIREMENTS_VERSION
+from __version__ import VERSION, REQUIREMENTS_VERSION, FILTER_ALIASES, META_FILTERS, REVERSE_ALIASES
 from dedup import should_merge, merge_fit_into_apple
 from fit_loader import load_fit_workouts
 
@@ -24,7 +24,7 @@ from fit_loader import load_fit_workouts
 @click.option('--summary', is_flag=True, help='Show summary only (no output files)')
 @click.option('--dryrun', is_flag=True, help='Preview actions without writing files')
 @click.option('--safe', is_flag=True, help='Remove personal fields (PII)')
-@click.option('--savepath', default=".", help='Base path to save the output folder')
+@click.option('--savepath', default=".", help='Base directory to save output folder')
 @click.option('--list-types', is_flag=True, help='Show all filter types and meta aliases')
 def main(export_zip, filter_type, start, end, fit_dir, structure, summary, dryrun, safe, savepath, list_types):
     click.echo(f"📦 Version: {VERSION}")
@@ -72,13 +72,12 @@ def resolve_output_path(zipfile_path, savepath="."):
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M")
     foldername = f"{base}_{timestamp}"
     return Path(savepath).expanduser().resolve() / foldername
-
 def extract_xml(zip_path, extract_to):
     with zipfile.ZipFile(zip_path, 'r') as z:
         z.extractall(extract_to)
     return os.path.join(extract_to, 'export.xml')
+
 def print_aliases():
-    from __version__ import FILTER_ALIASES, META_FILTERS
     click.echo("\nAvailable filter types:\n")
     for k, v in FILTER_ALIASES.items():
         if v: click.echo(f"  {k:10} → {v}")
@@ -87,7 +86,6 @@ def print_aliases():
         click.echo(f"  {k:10} → {', '.join(v)}")
 
 def normalize_filters(ftype):
-    from __version__ import FILTER_ALIASES, META_FILTERS
     if not ftype or ftype == 'all':
         return None
     if ftype in META_FILTERS:
@@ -114,7 +112,6 @@ def redact(record):
     }
 
 def parse_xml(xml_path, filter_type=None, start=None, end=None, safe=False):
-    from __version__ import REVERSE_ALIASES
     tree = etree.parse(xml_path)
     root = tree.getroot()
     records = defaultdict(list)
@@ -194,7 +191,7 @@ def output_tree(records, workouts, outdir, dryrun, source_counts, merged_count):
     }
 
     for rtype, items in records.items():
-        alias = rtype.split('.')[-1].lower()
+        alias = REVERSE_ALIASES.get(rtype, rtype.split('.')[-1].lower())
         with open(outdir / 'records' / f"{alias}.json", 'w') as f:
             json.dump(items, f, indent=2)
         summary["record_types"][alias] = len(items)
@@ -222,9 +219,10 @@ def dump_flat(records, workouts, outdir, source_counts, merged_count):
         }
     }
     for rtype, items in records.items():
-        alias = rtype.split('.')[-1].lower()
+        alias = REVERSE_ALIASES.get(rtype, rtype.split('.')[-1].lower())
         flat["records"][alias] = items
         flat["summary"]["record_types"][alias] = len(items)
+
     with open(outdir / 'dumpster.json', 'w') as f:
         json.dump(flat, f, indent=2)
 

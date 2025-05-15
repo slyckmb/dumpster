@@ -1,6 +1,6 @@
-# __version__.py
+# __version__.py — DUMPSTER
 
-VERSION = "v0.2.4-dev"
+VERSION = "v0.2.4-fx1"
 REQUIREMENTS_VERSION = "0.2.4"
 
 FILTER_ALIASES = {
@@ -34,5 +34,4 @@ META_FILTERS = {
     ]
 }
 
-# Generate REVERSE_ALIASES for reverse mapping
 REVERSE_ALIASES = {v: k for k, v in FILTER_ALIASES.items() if v}
