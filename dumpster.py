@@ -54,8 +54,10 @@ def main(export_zip, filter_type, start, end, fit_dir, structure, summary, dryru
     if fit_dir:
         merged, leftovers = merge_workouts(workouts, fit_workouts)
         all_workouts = merged + leftovers
+        merged_count = len(merged)
     else:
         all_workouts = workouts
+        merged_count = 0
     
     source_counts = {
         "xml": len(workouts),

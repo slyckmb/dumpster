@@ -1,6 +1,6 @@
 # __version__.py — DUMPSTER
 
-VERSION = "v0.2.4-fx3"
+VERSION = "v0.2.4-fx4"
 REQUIREMENTS_VERSION = "0.2.4"
 
 FILTER_ALIASES = {
