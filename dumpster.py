@@ -66,10 +66,9 @@ def main(export_zip, filter_type, start, end, fit_dir, structure, summary, dryru
     
 
     if structure == 'flat':
-        dump_flat(records, all_workouts, output_path, source_counts, len(merged))
+        dump_flat(records, all_workouts, output_path, source_counts, merged_count)
     else:
-        output_tree(records, all_workouts, output_path, dryrun, source_counts, len(merged))
-
+        output_tree(records, all_workouts, output_path, dryrun, source_counts, merged_count)
     if not dryrun:
         click.echo(f"\n✅ Output written to {output_path}")
 
