@@ -51,13 +51,17 @@ def main(export_zip, filter_type, start, end, fit_dir, structure, summary, dryru
     records, workouts = parse_xml(xml_path, filter_type=filter_list, start=start, end=end, safe=safe)
 
     fit_workouts = load_fit_workouts(fit_dir) if fit_dir else []
-    merged, leftovers = merge_workouts(workouts, fit_workouts)
-
-    all_workouts = merged + leftovers
+    if fit_dir:
+        merged, leftovers = merge_workouts(workouts, fit_workouts)
+        all_workouts = merged + leftovers
+    else:
+        all_workouts = workouts
+    
     source_counts = {
         "xml": len(workouts),
         "fit": len(fit_workouts),
     }
+    
 
     if structure == 'flat':
         dump_flat(records, all_workouts, output_path, source_counts, len(merged))
@@ -142,6 +146,8 @@ def parse_xml(xml_path, filter_type=None, start=None, end=None, safe=False):
             records[type_].append(record)
 
         elif el.tag == 'Workout':
+            if filter_type is not None and "WORKOUT" not in filter_type:
+                continue
             workout = {
                 'type': el.get('workoutActivityType'),
                 'duration_min': try_cast(el.get('duration')),
@@ -152,8 +158,11 @@ def parse_xml(xml_path, filter_type=None, start=None, end=None, safe=False):
                 'device': el.get('device'),
                 'source': 'xml'
             }
-            if safe: workout = redact(workout)
+            if safe:
+                workout = redact(workout)
             workouts.append(workout)
+            print(f"📥 Parsed workout: {workout['type']} @ {workout['start_time']}")
+       
 
     return records, workouts
 
